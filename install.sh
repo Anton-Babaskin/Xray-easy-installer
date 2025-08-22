@@ -1,44 +1,51 @@
 #!/usr/bin/env bash
+# install.sh — xray-easy-installer (VLESS + REALITY + Vision) with fallback, iptables, and xuser
+
 set -euo pipefail
 
-# === VARIABLES ===
-XRAY_DIR="/usr/local/bin"
-CONFIG_DIR="/usr/local/etc/xray"
-CONFIG="$CONFIG_DIR/config.json"
-SERVICE="/etc/systemd/system/xray.service"
+CONFIG="/usr/local/etc/xray/config.json"
+XRAY_BIN="/usr/local/bin/xray"
 XUSER_BIN="/usr/local/bin/xuser"
-PORT=443
-FALLBACK="www.google.com"
-FIRST_USER="admin"
+SERVICE="/etc/systemd/system/xray.service"
 
-# === INSTALL DEPENDENCIES ===
-apt update && apt install -y curl jq uuid-runtime iptables
+install_xray() {
+  echo "🔧 Установка Xray..."
 
-# === CREATE DIRS ===
-mkdir -p "$XRAY_DIR" "$CONFIG_DIR"
+  mkdir -p /usr/local/etc/xray
 
-# === DOWNLOAD XRAY (amnezia-xray-core) ===
-curl -L -o "$XRAY_DIR/xray" https://github.com/amnezia-vpn/amnezia-xray-core/releases/latest/download/xray.linux.64
-chmod +x "$XRAY_DIR/xray"
+  echo "📦 Скачиваем Xray-core (Amnezia Edition)..."
+  curl -Lo "$XRAY_BIN" https://github.com/amnezia/xray-core/releases/latest/download/xray-linux-64
+  chmod +x "$XRAY_BIN"
 
-# === GENERATE CONFIG ===
-PRIVATE_KEY=$($XRAY_DIR/xray x25519 | awk '/Private/{print $3}')
-PUBLIC_KEY=$($XRAY_DIR/xray x25519 -i "$PRIVATE_KEY" | awk '/Public/{print $3}')
-SHORT_ID=$(openssl rand -hex 8)
-UUID=$(uuidgen)
+  echo "📁 Скачиваем geo-файлы..."
+  curl -Lo /usr/local/etc/xray/geoip.dat https://github.com/v2fly/geoip/releases/latest/download/geoip.dat
+  curl -Lo /usr/local/etc/xray/geosite.dat https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat
 
-cat > "$CONFIG" <<EOF
+  echo "🛡️ Генерация ключей..."
+  keys=$($XRAY_BIN x25519)
+  priv=$(echo "$keys" | awk '/Private/{print $3}')
+  pub=$(echo "$keys" | awk '/Public/{print $3}')
+  sid=$(openssl rand -hex 8)
+  uuid=$(uuidgen)
+
+  ip=$(curl -s -4 https://api.ipify.org || hostname -I | awk '{print $1}')
+  sni="www.google.com"
+
+  echo "⚙️ Создаём config.json..."
+  cat > "$CONFIG" <<EOF
 {
   "log": { "loglevel": "warning" },
   "inbounds": [{
-    "port": $PORT,
+    "port": 443,
     "protocol": "vless",
     "settings": {
-      "clients": [{
-        "id": "$UUID",
-        "flow": "xtls-rprx-vision",
-        "email": "$FIRST_USER"
-      ]},
+      "clients": [
+        {
+          "id": "$uuid",
+          "flow": "xtls-rprx-vision",
+          "email": "admin"
+        }
+      ],
       "decryption": "none"
     },
     "streamSettings": {
@@ -46,11 +53,11 @@ cat > "$CONFIG" <<EOF
       "security": "reality",
       "realitySettings": {
         "show": false,
-        "dest": "$FALLBACK:443",
+        "dest": "www.google.com:443",
         "xver": 0,
-        "serverNames": ["$FALLBACK"],
-        "privateKey": "$PRIVATE_KEY",
-        "shortIds": ["$SHORT_ID"]
+        "serverNames": ["$sni"],
+        "privateKey": "$priv",
+        "shortIds": ["$sid"]
       }
     }
   }],
@@ -58,90 +65,79 @@ cat > "$CONFIG" <<EOF
 }
 EOF
 
-# === SYSTEMD SERVICE ===
-cat > "$SERVICE" <<EOF
+  echo "🧩 Создаём systemd unit..."
+  cat > "$SERVICE" <<EOF
 [Unit]
 Description=Xray Service
-After=network.target
+After=network.target nss-lookup.target
 
 [Service]
-ExecStart=$XRAY_DIR/xray -config $CONFIG
+ExecStart=$XRAY_BIN run -config $CONFIG
 Restart=on-failure
-User=root
+User=nobody
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reexec
-systemctl daemon-reload
-systemctl enable xray
-systemctl restart xray
-
-# === IPTABLES ===
-iptables -I INPUT -p tcp --dport $PORT -j ACCEPT
-iptables-save > /etc/iptables.rules
-
-# === INSTALL XUSER ===
-cat > "$XUSER_BIN" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-
-CONFIG="/usr/local/etc/xray/config.json"
-BIN="/usr/local/bin/xray"
-
-get_pub() { jq -r '.inbounds[0].streamSettings.realitySettings.privateKey' "$CONFIG" | xargs -I{} $BIN x25519 -i {} | awk '/Public/{print $3}'; }
-get_port() { jq -r '.inbounds[0].port' "$CONFIG"; }
-get_sni()  { jq -r '.inbounds[0].streamSettings.realitySettings.serverNames[0]' "$CONFIG"; }
-get_sid()  { jq -r '.inbounds[0].streamSettings.realitySettings.shortIds[0]' "$CONFIG"; }
-get_ip()   { curl -s -4 https://api.ipify.org || hostname -I | awk '{print $1}'; }
-
-add_user() {
-  local name="$1"
-  local uuid=$(uuidgen)
-  jq '.inbounds[0].settings.clients += [{"id":"'"$uuid"'","flow":"xtls-rprx-vision","email":"'"$name"'"}]' "$CONFIG" > /tmp/config.json
-  mv /tmp/config.json "$CONFIG"
+  systemctl daemon-reexec
+  systemctl daemon-reload
+  systemctl enable xray
   systemctl restart xray
-  link_user "$uuid"
+
+  echo "📦 Устанавливаем xuser CLI..."
+  curl -Lo "$XUSER_BIN" https://raw.githubusercontent.com/Anton-Babaskin/xray-easy-installer/main/xuser
+  chmod +x "$XUSER_BIN"
+
+  echo "🧱 Добавляем iptables правило на порт 443..."
+  iptables -I INPUT -p tcp --dport 443 -j ACCEPT
+
+  echo "✅ Установка завершена."
+  echo ""
+  echo "🔗 VLESS ссылка:"
+  $XUSER_BIN link admin
 }
 
-del_user() {
-  local key="$1"
-  jq '.inbounds[0].settings.clients |= map(select(.email != "'"$key"'") | select(.id != "'"$key"'"))' "$CONFIG" > /tmp/config.json
-  mv /tmp/config.json "$CONFIG"
-  systemctl restart xray
-  echo "Удалено: $key"
+uninstall_xray() {
+  echo "🧹 Удаление Xray..."
+
+  systemctl stop xray
+  systemctl disable xray
+  rm -f "$SERVICE"
+  systemctl daemon-reload
+
+  rm -f "$XRAY_BIN"
+  rm -f "$XUSER_BIN"
+  rm -rf /usr/local/etc/xray
+
+  iptables -D INPUT -p tcp --dport 443 -j ACCEPT || true
+
+  echo "✅ Xray удалён полностью."
 }
 
-list_users() {
-  jq -r '.inbounds[0].settings.clients[] | "\(.email)\t\(.id)"' "$CONFIG"
+main_menu() {
+  echo "Welcome to Xray-easy-installer!"
+  echo ""
+  echo "1) Install Xray (VLESS + REALITY + Vision)"
+  echo "2) Add new user"
+  echo "3) List users"
+  echo "4) Remove user"
+  echo "5) Uninstall Xray"
+  echo "6) Exit"
+  echo ""
+
+  read -rp "Select an option [1-6]: " option
+  case "$option" in
+    1) install_xray ;;
+    2) $XUSER_BIN add ;;
+    3) $XUSER_BIN list ;;
+    4) $XUSER_BIN del ;;
+    5) uninstall_xray ;;
+    6) exit 0 ;;
+    *) echo "❌ Invalid option." ;;
+  esac
 }
 
-link_user() {
-  local key="$1"
-  local uuid=$(jq -r '.inbounds[0].settings.clients[] | select(.email=="'"$key"'") | .id' "$CONFIG")
-  [[ -z "$uuid" ]] && uuid="$key"
-  local ip=$(get_ip)
-  local port=$(get_port)
-  local sni=$(get_sni)
-  local sid=$(get_sid)
-  local pub=$(get_pub)
-  echo "vless://${uuid}@${ip}:${port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${sni}&fp=chrome&pbk=${pub}&type=tcp&sid=${sid}#${key}"
-}
-
-case "${1:-}" in
-  add) shift; add_user "$@";;
-  del) shift; del_user "$@";;
-  list) list_users;;
-  link) shift; link_user "$@";;
-  *) echo "Usage: xuser add|del|list|link"; exit 1;;
-esac
-EOF
-
-chmod +x "$XUSER_BIN"
-
-# === DONE ===
-echo "✅ Xray REALITY установлен!"
-echo "🔑 Первый пользователь: $FIRST_USER"
-echo "👉 Ссылка:"
-xuser link "$FIRST_USER"
+main_menu
