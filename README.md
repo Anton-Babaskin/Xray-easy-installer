@@ -1,98 +1,67 @@
-# xray-easy-installer
+# Xray Easy Installer
 
-🚀 One-command Xray VLESS + REALITY + Vision installer with auto-generated config, iptables rules, fallback, and CLI user manager (`xuser`).  
-✅ Inspired by AmneziaVPN, but lighter, faster, and scriptable.
+One-command installer for Xray VLESS + REALITY + Vision with generated configuration, a systemd service, firewall rules and the `xuser` command-line user manager.
+
+> [!CAUTION]
+> This project changes network, firewall and systemd configuration. Review `install.sh` before running it and test on a disposable host before production deployment.
 
 ## Features
 
-- 🔐 Xray REALITY (VLESS+Vision) over port `443`
-- 🧩 Fallback to `www.google.com:443` (as in AmneziaVPN)
-- 🔁 Auto-generated `config.json`
-- 🔧 Systemd service for Xray
-- 🌐 Automatic iptables rules for port 443
-- 👤 CLI tool `xuser` for user management
-- 💡 Tested on Debian/Ubuntu (host or VM)
+- VLESS + REALITY + Vision on TCP/443
+- Generated Xray configuration and key material
+- systemd service installation
+- iptables rule setup
+- `xuser` CLI for user management and connection links
+- Debian and Ubuntu target environments
 
 ## Installation
 
-### One-liner (for clean system):
+Run on a clean, supported Linux host as root:
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/YOUR_USERNAME/xray-easy-installer/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/Anton-Babaskin/Xray-easy-installer/main/install.sh)
 ```
 
-> 💡 Replace `YOUR_USERNAME` with your GitHub username or repo path.
+For a reviewable installation, clone the repository first:
 
-### What it does:
-1. Downloads `amnezia-xray-core`
-2. Generates fresh `config.json` with fallback + short ID + private key
-3. Installs systemd unit `xray.service`
-4. Creates default user `admin`
-5. Sets up `iptables` rule for port `443`
-6. Installs `/usr/local/bin/xuser` CLI
+```bash
+git clone https://github.com/Anton-Babaskin/Xray-easy-installer.git
+cd Xray-easy-installer
+less install.sh
+sudo bash install.sh
+```
 
----
+## User management
 
-## Usage
-
-### Add a new user:
 ```bash
 xuser add username
-```
-
-### Delete a user:
-```bash
 xuser del username
-```
-
-### Show all users:
-```bash
 xuser list
-```
-
-### Generate connection link:
-```bash
 xuser link username
 ```
 
-> 🔗 Returns VLESS REALITY link compatible with:
-> - v2rayNG
-> - sing-box
-> - Nekoray
-> - v2rayN (Windows)
+Generated links are intended for clients compatible with VLESS REALITY, including v2rayNG, v2rayN, sing-box and Nekoray.
 
----
+## Default paths
 
-## Default Ports & Paths
+| Component | Value |
+|---|---|
+| Xray binary | `/usr/local/bin/xray` |
+| Configuration | `/usr/local/etc/xray/config.json` |
+| systemd unit | `xray.service` |
+| User manager | `/usr/local/bin/xuser` |
+| Listening port | `443` |
 
-| Component         | Value                          |
-|------------------|--------------------------------|
-| Xray binary      | `/usr/local/bin/xray`          |
-| Config file      | `/usr/local/etc/xray/config.json` |
-| Systemd service  | `xray.service`                 |
-| CLI tool         | `/usr/local/bin/xuser`         |
-| Port             | `443`                          |
-| Fallback         | `www.google.com:443`           |
+## Roadmap
 
----
+- IPv6 support
+- Configurable fallback targets
+- Safer firewall-backend detection
+- Explicit uninstall and rollback path
+- Automated configuration validation
 
-## License & Attribution
+## Upstream and license
 
-Based on [AmneziaVPN](https://github.com/amnezia-vpn/amnezia-xray-core).  
-Modified and simplified for easy custom deployment.
+The installer deploys an Xray/Amnezia-compatible runtime. Review the licenses of this repository and the selected Xray binary before redistribution.
 
-> 🛡️ MIT License  
-> ✨ Maintained by **your-team**
-
----
-
-## To Do
-
-- [ ] IPv6 support (optional)
-- [ ] Custom fallback domains
-- [ ] DNS-over-HTTPS integration
-- [ ] Web UI (optional)
-
----
-
-Happy tunneling! 🚇
+See [LICENSE](./LICENSE) when present in the repository.
